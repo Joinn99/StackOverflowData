@@ -1,0 +1,6 @@
+pandas>=0.24.0
+networkx>=2.4
+tqdm>=4.37.0
+pandas_gbq>=0.13.1
+protobuf>=3.12.1
+google-auth>=1.11.0
