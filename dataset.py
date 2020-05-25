@@ -11,6 +11,9 @@ from tqdm import tqdm
 from google.oauth2 import service_account
 import pandas_gbq
 
+# 10个热门标签
+TAGS = "SELECT DISTINCT tag FROM `{:s}.SOFeature.Score600`"
+
 # 提取PageRank值
 SQQUERY_PGR = """
     SELECT user_id id,
@@ -67,7 +70,7 @@ TABLE = """
 """
 # 标签特殊字符转义
 def tra(tag):
-    return tag.replace('_sharp', '#').replace('_plus', '++')
+    return tag.replace('#', '_sharp').replace('++', '_plus')
 
 # SQL文件读取
 def query(file):
@@ -80,8 +83,6 @@ class DatasetGenerator:
         with open('auth.json', 'r') as auth_file:
             cred = json.load(auth_file)
             self.credentials = service_account.Credentials.from_service_account_info(cred)
-        self.tags = ['css', 'javascript', 'java', 'python', 'c_sharp', 'php',
-                     'android', 'c_plus', 'html', 'jquery']
         self.data = sqlite3.connect("Data/StackExpert.sqlite")
         logger = logging.getLogger('pandas_gbq')
         logger.setLevel(logging.INFO)
@@ -114,20 +115,20 @@ class DatasetGenerator:
         # 关联计算完成的Pageank和TrueSkill数据库
         pgr = sqlite3.connect('Data/PageRank.sqlite')
         trs = sqlite3.connect('Data/TrueSkill.sqlite')
-        for tag in tqdm(self.tags):
-            arg['tag'] = tag
+        tags = self._query(TAGS.format(self.proj))
+        for tag in tqdm(list(tags['tag'])):
             # 生成除了回答特征以外其他特征的数据
-            features = pandas_gbq.read_gbq(query('Script/Dataset.sql').format(**arg),
+            features = pandas_gbq.read_gbq(query('Script/Dataset.sql').format(**{'tag': tag}),
                                            credentials=self.credentials).set_index('id')
             # 关联PageRank和TrueSkiil特征
             features = features.join(read_sql_query(
-                SQQUERY_PGR.format(tag), pgr, index_col='id'))
+                SQQUERY_PGR.format(tra(tag)), pgr, index_col='id'))
             features = features.join(read_sql_query(
-                SQQUERY_TS.format(tag), trs, index_col='id'))
-            self.data.execute(TABLE.format(tag))
+                SQQUERY_TS.format(tra(tag)), trs, index_col='id'))
+            self.data.execute(TABLE.format(tra(tag)))
             features.reset_index(inplace=True)
             features = features.fillna(0.0)     # 填补缺失值
-            features.to_sql(tag, self.data, if_exists='append', index=False)
+            features.to_sql(tra(tag), self.data, if_exists='append', index=False)
 
 
 if __name__ == "__main__":

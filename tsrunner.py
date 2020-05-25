@@ -1,4 +1,4 @@
-# trueskill.py
+# tsrunner.py
 # 动态更新trueskill值
 # python 3.x
 
@@ -9,6 +9,9 @@ from tqdm import tqdm
 from google.oauth2 import service_account
 import pandas_gbq
 import trueskill
+
+# 10个热门标签
+TAGS = "SELECT DISTINCT tag FROM `{:s}.SOFeature.Score600`"
 
 # 获取数据集内的用户ID
 USER = """
@@ -38,7 +41,7 @@ QUES = """
 
 # 标签特殊字符转义
 def tra(tag):
-    return tag.replace('_sharp', '#').replace('_plus', '++')
+    return tag.replace('#', '_sharp').replace('++', '_plus')
 
 # 提取TrueSkill值 (mu-3*sigma)
 def tse(group):
@@ -57,8 +60,7 @@ class TrueSkillRunner():
             backend='mpmath', draw_probability=0.2)
         self.oriday = date(2008, 7, 31)
         self.fresh = trueskill.Rating(8.3333, 2.7778)
-        self.tags = ['css', 'javascript', 'java', 'python', 'c_sharp', 'php',
-                     'android', 'jquery', 'c_plus', 'html']
+        self.tags = self._query(TAGS.format(self.proj))
         tqdm.write("-" * 50 + "\nTrueSkill Runner")
 
     # 析构函数
@@ -75,7 +77,7 @@ class TrueSkillRunner():
         tqdm.write("-" * 50 + "\nStart creating tables...")
         for tag in tqdm(self.tags):
             # 执行BigQuery查询，获取数据表
-            users = self._query(USER.format(**{'tag': tra(tag), 'period': 120, 'proj':self.proj}))
+            users = self._query(USER.format(**{'tag': tag, 'period': 120, 'proj':self.proj}))
             self.tsdb.execute(
                 """CREATE TABLE IF NOT EXISTS {:s} (
                     user_id INTEGER PRIMARY KEY NOT NULL,
@@ -83,11 +85,11 @@ class TrueSkillRunner():
                     ts REAL NOT NULL,
                     mu REAL NOT NULL,
                     sigma REAL NOT NULL);
-                """.format(tag))    # 建立数据表的格式
-            users.to_sql(tag, self.tsdb, if_exists='append', index=False)
+                """.format(tra(tag)))    # 建立数据表的格式
+            users.to_sql(tra(tag), self.tsdb, if_exists='append', index=False)
             self.tsdb.execute(  # 建立索引
-                "CREATE INDEX idx_{tag} ON {tag} (judge_date);".format(**{'tag': tag}))
-            tqdm.write('Creation: Tag {:s} database created.'.format(tag))
+                "CREATE INDEX idx_{tag} ON {tag} (judge_date);".format(**{'tag': tra(tag)}))
+            tqdm.write('Creation: Tag {:s} database created.'.format(tra(tag)))
         self.tsdb.commit()
         tqdm.write('Database all created.')
 
@@ -103,7 +105,7 @@ class TrueSkillRunner():
             # 获取回答排名数据
             ques = self._query(QUES.format(**{'dates': day_s, 'datee': day_e, 'proj':self.proj}))
             for _, row in tqdm(ques.iterrows(), total=ques.shape[0], leave=False):
-                tag = row['tag'].replace('#', '_sharp').replace('++', '_plus')
+                tag = tra(row['tag'])
                 cur = self.tsdb.execute(    # 获取本周有回答记录的用户ID
                     "SELECT user_id, mu, sigma FROM {:s} WHERE user_id IN {}".format(
                         tag, tuple(row['rank_id'])+(row['asker_id'], )))
@@ -132,10 +134,10 @@ class TrueSkillRunner():
                 self.tsdb.executemany("UPDATE {:s} SET mu=?, sigma=? WHERE user_id=?".format(tag),
                                       [ts+(id, ) for (id, ts) in user_ts.items()])
             # 对本周到达时间窗口末尾的用户，提取TrueSkill值，存储至表中
-            for tag in self.tags:
+            for tag in list(self.tags['tag']):
                 self.tsdb.execute(
                     """UPDATE {:s} SET ts=mu-3*sigma
-                    WHERE judge_date BETWEEN '{:s}' AND '{:s}'""".format(tag, day_s, day_e))
+                    WHERE judge_date BETWEEN '{:s}' AND '{:s}'""".format(tra(tag), day_s, day_e))
             self.tsdb.commit()
             tqdm.write("Date: {:s}-{:s} | Update finished.".format(day_s, day_e))
         tqdm.write("-" * 50 + "\nTrueSkill ranking finished.")
