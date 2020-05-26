@@ -83,6 +83,7 @@ class DatasetGenerator:
         with open('auth.json', 'r') as auth_file:
             cred = json.load(auth_file)
             self.credentials = service_account.Credentials.from_service_account_info(cred)
+            self.proj = cred['project_id']
         self.data = sqlite3.connect("Data/StackExpert.sqlite")
         logger = logging.getLogger('pandas_gbq')
         logger.setLevel(logging.INFO)
@@ -111,14 +112,13 @@ class DatasetGenerator:
 
     # 数据集生成
     def dataset_gen(self):
-        arg = {'period': 120}
         # 关联计算完成的Pageank和TrueSkill数据库
         pgr = sqlite3.connect('Data/PageRank.sqlite')
         trs = sqlite3.connect('Data/TrueSkill.sqlite')
-        tags = self._query(TAGS.format(self.proj))
+        tags = pandas_gbq.read_gbq(TAGS.format(self.proj), credentials=self.credentials)
         for tag in tqdm(list(tags['tag'])):
             # 生成除了回答特征以外其他特征的数据
-            features = pandas_gbq.read_gbq(query('Script/Dataset.sql').format(**{'tag': tag}),
+            features = pandas_gbq.read_gbq(query('Script/Dataset.sql').format(**{'tag': tag, 'period': 120}),
                                            credentials=self.credentials).set_index('id')
             # 关联PageRank和TrueSkiil特征
             features = features.join(read_sql_query(
@@ -132,13 +132,16 @@ class DatasetGenerator:
 
 
 if __name__ == "__main__":
-    DG = DatasetGenerator()
-    OPT = input("""
-        Choose Mode(1-2):
-        [1] Generate raw data.
-        [2] Download complete data.
-    """)
-    if OPT == '1':
-        DG.preprocessing()
-    elif OPT == '2':
-        DG.dataset_gen()
+    try:
+        DG = DatasetGenerator()
+        OPT = input("""
+            Choose Mode(1-2):
+            [1] Generate raw data.
+            [2] Download complete data.
+        """)
+        if OPT == '1':
+            DG.preprocessing()
+        elif OPT == '2':
+            DG.dataset_gen()
+    except ValueError:
+        print("Authentication failed.")
